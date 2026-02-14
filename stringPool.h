@@ -6,7 +6,7 @@
 class StringPool
 {
 public:
-    // This creates the one and only instance of the pool
+    // This creates the one and only instance of the pool.
     static StringPool &instance()
     {
         static StringPool instance;
