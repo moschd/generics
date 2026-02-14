@@ -50,6 +50,14 @@ namespace G_KDTree
         {
             children_.reserve(50);
         }
+
+        [[nodiscard]] inline bool hasLeftBranch() const {
+        return leftIdx_ != G_KDTree::INVALID_IDX;
+    }
+
+    [[nodiscard]] inline bool hasRightBranch() const {
+        return rightIdx_ != G_KDTree::INVALID_IDX;
+    }
     };
 
     /**
@@ -248,11 +256,11 @@ namespace G_KDTree
                 std::cout << "  CHILDREN: " << aRoot.children_.size() << ".\n\n";
             }
 
-            if (aRoot.leftIdx_ != G_KDTree::INVALID_IDX)
+            if (aRoot.hasLeftBranch())
             {
                 printTree(aRoot.leftIdx_);
             }
-            if (aRoot.rightIdx_ != G_KDTree::INVALID_IDX)
+            if (aRoot.hasRightBranch())
             {
                 printTree(aRoot.rightIdx_);
             }
@@ -318,14 +326,14 @@ namespace G_KDTree
             }
 
             // Check if we need to search the LEFT branch
-            if (startCoord < partitionCoord && current.leftIdx_ != G_KDTree::INVALID_IDX)
+            if (startCoord < partitionCoord && current.hasLeftBranch())
             {
                 getIntersectCandidates(current.leftIdx_, aDepth + 1, aStartPoint, aMaxSearchPoint, aPassedNodes);
             }
 
             // Check if we need to search the RIGHT branch
             // If the search area overlaps or is entirely to the right of the partition
-            if (partitionCoord < (startCoord + maxSearchOffset) && current.rightIdx_ != G_KDTree::INVALID_IDX)
+            if (partitionCoord < (startCoord + maxSearchOffset) && current.hasRightBranch())
             {
                 getIntersectCandidates(current.rightIdx_, aDepth + 1, aStartPoint, aMaxSearchPoint, aPassedNodes);
             }
@@ -335,18 +343,19 @@ namespace G_KDTree
         {
             return generateNode(
                 Point3D(maxDimensions_.x_ / 2, maxDimensions_.y_ / 2, maxDimensions_.z_ / 2),
-                G_KDTree::MIN_DEPTH);
+                G_KDTree::MIN_DEPTH
+            );
         }
 
     public:
         KdTree(const int aEstimatedNrOfItemFits, const Point3D aMaxDimensions) : maxDimensions_(aMaxDimensions)
 
         {
+            nodes_.reserve(aEstimatedNrOfItemFits);
             // Calculates the depth of the tree that will be generated.
             // This attempts to make the algorithm more efficient by scaling the tree depending of the estimated number of items that will fit in the bin.
             maxDepth_ = static_cast<int>(ceil(sqrt(aEstimatedNrOfItemFits / G_KDTree::MAX_ITEMS_PER_NODE) + 1));
             maxDepth_ = std::min(maxDepth_, static_cast<int>(G_KDTree::MAX_DEPTH));
-            nodes_.reserve(aEstimatedNrOfItemFits);
             initialize();
         };
 
