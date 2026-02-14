@@ -10,6 +10,11 @@
 namespace G_KDTree
 {
 
+    constexpr uint32_t INVALID_IDX = std::numeric_limits<uint32_t>::max();
+    constexpr const unsigned int MIN_DEPTH{0};
+    constexpr const unsigned int MAX_DEPTH{8};
+    constexpr const unsigned int MAX_ITEMS_PER_NODE{100};
+
     namespace axis
     {
         constexpr const unsigned int WIDTH{0};
@@ -35,43 +40,17 @@ namespace G_KDTree
 
     struct Node
     {
-        bool isLeaf_ = false;
-        std::shared_ptr<Node> left_ = std::shared_ptr<Node>(nullptr);
-        std::shared_ptr<Node> right_ = std::shared_ptr<Node>(nullptr);
         int myDepth_;
-        std::vector<KD_ItemMeta> myChildren_;
-        Point3D minSearchDimensions_;
-        Point3D maxSearchDimensions_;
+        bool isLeaf_ = false;
+        uint32_t leftIdx_ = G_KDTree::INVALID_IDX;
+        uint32_t rightIdx_ = G_KDTree::INVALID_IDX;
+        std::vector<KD_ItemMeta> children_;
         Point3D partitionPoint_;
-
-        Node(const Point3D aPartitionPoint, const Point3D aMins, const Point3D aMaxs, const int aCurrentDepth)
-            : myDepth_(aCurrentDepth),
-              minSearchDimensions_(aMins),
-              maxSearchDimensions_(aMaxs),
-              partitionPoint_(aPartitionPoint)
+        Node(const Point3D aPartitionPoint, const int aCurrentDepth) : myDepth_(aCurrentDepth), partitionPoint_(aPartitionPoint)
         {
-            Node::myChildren_.reserve(125);
+            children_.reserve(50);
         }
     };
-
-    /**
-     * @brief Spawn a Node.
-     *
-     * This method creates a Node used as node in the kd-tree.
-     * Each node represents a point in 3R.
-     *
-     * @param aPartitionPoint   - the 3R point that the node will be representating and splitting.
-     * @param aMins             - 3R point marking the minimum border of the search area point for which this node will be responsable.
-     * @param aMaxs             - 3R point marking the maximum border of the search area point for which this node will be responsable.
-     * @param aCurrentDepth     - the tree depth on which this node is created.
-     */
-    inline std::shared_ptr<Node> generateNode(const Point3D &aPartitionPoint,
-                                              const Point3D &aMins,
-                                              const Point3D &aMaxs,
-                                              const int aCurrentDepth)
-    {
-        return std::make_shared<Node>(aPartitionPoint, aMins, aMaxs, aCurrentDepth);
-    }
 
     /**
      * @brief Represents the bin in tree form.
@@ -87,20 +66,27 @@ namespace G_KDTree
     class KdTree
     {
     private:
-        int maxDepth_;
-        std::shared_ptr<Node> treeRoot_;
-        Point3D minDimensions_ = Point3D(0, 0, 0);
+        std::vector<Node> nodes_;
+        uint32_t rootIdx_ = 0;
         Point3D maxDimensions_;
+        int maxDepth_ = G_KDTree::MIN_DEPTH;
 
         /**
-         * @brief Calculates the depth of the tree that will be generated.
+         * @brief Spawn a Node.
          *
-         * This method calculates what would be the desired depth of the tree.
-         * This attempts to make the algorithm more efficient by scaling the tree depending of the estimated number of items that will fit in the bin.
+         * This method creates a Node used as node in the kd-tree.
+         * Each node represents a point in 3R.
          *
-         * @param aEstimatedNumberOfItemFits - integer indicating the estimated number of items that will be in the bin when packing has finished.
+         * @param aPartitionPoint   - the 3R point that the node will be representating and splitting.
+         * @param aMins             - 3R point marking the minimum border of the search area point for which this node will be responsable.
+         * @param aMaxs             - 3R point marking the maximum border of the search area point for which this node will be responsable.
+         * @param aCurrentDepth     - the tree depth on which this node is created.
          */
-        void calculateMaxDepth(int aEstimatedNumberOfItemFits) { maxDepth_ = ceil(sqrt(aEstimatedNumberOfItemFits / 125) + 1); };
+        inline uint32_t generateNode(const Point3D &aPartitionPoint, const int aCurrentDepth)
+        {
+            nodes_.emplace_back(aPartitionPoint, aCurrentDepth);
+            return static_cast<uint32_t>(nodes_.size() - 1);
+        }
 
         /**
          * @brief Pre generate a fixed depth balanced kd-tree.
@@ -116,22 +102,19 @@ namespace G_KDTree
          * @param aMaxs             - 3R point marking the maximum border of the search area for which this node will be responsable.
          * @param aRequestedDepth   - the requested maximum depth of the tree to be generated.
          */
-        void generateTree(std::shared_ptr<Node> &aRoot,
+        void generateTree(const uint32_t currentIdx,
                           const int aDepth,
                           const Point3D &aPartitionPoint,
                           const Point3D &aMins,
-                          const Point3D &aMaxs,
-                          const int aRequestedDepth)
+                          const Point3D &aMaxs)
         {
-
-            const int axis = aDepth % 3; // R3 is 3
 
             // 1. Calculate the new partition point for the PREVIOUS axis
             // This centers the split point based on the bounds (Mins/Maxs)
             Point3D newPartitionPoint = aPartitionPoint;
             if (aDepth > 0)
             {
-                const int prevAxis = (aDepth - 1) % 3;
+                const int prevAxis = (aDepth - 1) % G_KDTree::axis::R3;
                 if (prevAxis == G_KDTree::axis::WIDTH)
                 {
                     newPartitionPoint.x_ = (aMins.x_ + aMaxs.x_) / 2;
@@ -147,16 +130,18 @@ namespace G_KDTree
             }
 
             // 2. Base Case: Leaf Node
-            if (aDepth > aRequestedDepth)
+            if (aDepth >= maxDepth_)
             {
-                aRoot->isLeaf_ = true;
-                aRoot->partitionPoint_ = newPartitionPoint;
+                nodes_[currentIdx].isLeaf_ = true;
+                nodes_[currentIdx].partitionPoint_ = newPartitionPoint;
                 return;
             }
 
-            // 3. Generate child nodes
-            aRoot->left_ = generateNode(newPartitionPoint, aMins, aMaxs, aDepth);
-            aRoot->right_ = generateNode(newPartitionPoint, aMins, aMaxs, aDepth);
+            const int axis = aDepth % G_KDTree::axis::R3;
+            const uint32_t left = generateNode(newPartitionPoint, aDepth);
+            const uint32_t right = generateNode(newPartitionPoint, aDepth);
+            nodes_[currentIdx].leftIdx_ = left;
+            nodes_[currentIdx].rightIdx_ = right;
 
             // 4. Recurse Left: Update Maxs for the current split axis
             Point3D leftMaxs = aMaxs;
@@ -172,7 +157,7 @@ namespace G_KDTree
             {
                 leftMaxs.z_ = newPartitionPoint.z_;
             }
-            generateTree(aRoot->left_, aDepth + 1, newPartitionPoint, aMins, leftMaxs, aRequestedDepth);
+            generateTree(left, aDepth + 1, newPartitionPoint, aMins, leftMaxs);
 
             // 5. Recurse Right: Update Mins for the current split axis
             Point3D rightMins = aMins;
@@ -188,7 +173,7 @@ namespace G_KDTree
             {
                 rightMins.z_ = newPartitionPoint.z_;
             }
-            generateTree(aRoot->right_, aDepth + 1, newPartitionPoint, rightMins, aMaxs, aRequestedDepth);
+            generateTree(right, aDepth + 1, newPartitionPoint, rightMins, aMaxs);
         }
 
         /**
@@ -202,18 +187,18 @@ namespace G_KDTree
          * @param aDepth            - The current depth of the tree.
          * @param aItemMaxPosition  - The furthest point in space that the item reaches, ie top right corner.
          */
-        void addItemKeyToLeaf(std::shared_ptr<Node> &aRoot,
+        void addItemKeyToLeaf(const uint32_t aCurrentIdx,
                               const int aItemKey,
                               const int aDepth,
                               const Point3D &aItemMaxPosition)
         {
             // 1. Get raw pointer to avoid ref-count overhead in recursion
-            Node *node = aRoot.get();
+            Node &node = nodes_[aCurrentIdx];
 
-            if (node->isLeaf_)
+            if (node.isLeaf_)
             {
                 // 2. Use the new Point3D based KD_ItemMeta constructor
-                node->myChildren_.emplace_back(aItemKey, aItemMaxPosition);
+                node.children_.emplace_back(aItemKey, aItemMaxPosition);
                 return;
             }
 
@@ -223,56 +208,54 @@ namespace G_KDTree
             bool goLeft = false;
             if (axis == G_KDTree::axis::WIDTH)
             {
-                goLeft = aItemMaxPosition.x_ < node->partitionPoint_.x_;
+                goLeft = aItemMaxPosition.x_ < node.partitionPoint_.x_;
             }
             else if (axis == G_KDTree::axis::DEPTH)
             {
-                goLeft = aItemMaxPosition.y_ < node->partitionPoint_.y_;
+                goLeft = aItemMaxPosition.y_ < node.partitionPoint_.y_;
             }
             else
             {
-                goLeft = aItemMaxPosition.z_ < node->partitionPoint_.z_;
+                goLeft = aItemMaxPosition.z_ < node.partitionPoint_.z_;
             }
 
             if (goLeft)
             {
-                addItemKeyToLeaf(node->left_, aItemKey, aDepth + 1, aItemMaxPosition);
+                addItemKeyToLeaf(node.leftIdx_, aItemKey, aDepth + 1, aItemMaxPosition);
             }
             else
             {
-                addItemKeyToLeaf(node->right_, aItemKey, aDepth + 1, aItemMaxPosition);
+                addItemKeyToLeaf(node.rightIdx_, aItemKey, aDepth + 1, aItemMaxPosition);
             }
         }
 
         /**
          * @brief Print tree to console..
          *
-         * @param aRoot         - Node whose children will be printed.
+         * @param aRoot - Node whose children will be printed.
          */
-        void printTreeImp(const std::shared_ptr<Node> aRoot) const
+        void printTree(const uint32_t aCurrentIdx) const
         {
-            if (aRoot == nullptr)
-            {
-                return;
-            };
+            const Node &aRoot = nodes_[aCurrentIdx];
 
-            if (!aRoot->Node::myChildren_.empty())
+            if (!aRoot.children_.empty())
             {
                 std::cout << "LEAF "
-                          << aRoot->Node::partitionPoint_.x_ << " "
-                          << aRoot->Node::partitionPoint_.y_ << " "
-                          << aRoot->Node::partitionPoint_.z_ << "\n";
+                          << aRoot.partitionPoint_.x_ << " "
+                          << aRoot.partitionPoint_.y_ << " "
+                          << aRoot.partitionPoint_.z_ << "\n";
 
-                std::cout << "  CHILDREN: " << aRoot->myChildren_.size() << ".\n\n";
-
-                // for (const int child : aRoot->myChildren_)
-                // {
-                //     std::cout << " " << child << " ";
-                // }
+                std::cout << "  CHILDREN: " << aRoot.children_.size() << ".\n\n";
             }
 
-            printTreeImp(aRoot->Node::left_);
-            printTreeImp(aRoot->Node::right_);
+            if (aRoot.leftIdx_ != G_KDTree::INVALID_IDX)
+            {
+                printTree(aRoot.leftIdx_);
+            }
+            if (aRoot.rightIdx_ != G_KDTree::INVALID_IDX)
+            {
+                printTree(aRoot.rightIdx_);
+            }
         };
 
         /**
@@ -286,20 +269,17 @@ namespace G_KDTree
          * @param aMaxSearchPoint   - The furthest point in space that an item can be in order to still be considered a intersection candidate.
          * @param aPassedNodes      - The vector to which itemKeys will be added.
          */
-        void getIntersectCandidates(const std::shared_ptr<Node> &aRoot,
+        void getIntersectCandidates(const uint32_t aIdx,
                                     const int aDepth,
                                     const Point3D &aStartPoint,
                                     const Point3D &aMaxSearchPoint,
                                     std::vector<int> &aPassedNodes) const
         {
-            Node *current = aRoot.get();
-            if (!current)
-                return;
+            const Node &current = nodes_[aIdx];
 
-            // 1. Leaf Logic: Standard loop is fastest here
-            if (current->isLeaf_)
+            if (current.isLeaf_)
             {
-                for (const auto &item : current->myChildren_)
+                for (const auto &item : current.children_)
                 {
                     // Bounding box intersection check
                     if (item.xLocation_ >= aStartPoint.x_ &&
@@ -322,85 +302,93 @@ namespace G_KDTree
             {
             case G_KDTree::axis::WIDTH:
                 startCoord = aStartPoint.x_;
-                partitionCoord = current->partitionPoint_.x_;
+                partitionCoord = current.partitionPoint_.x_;
                 maxSearchOffset = aMaxSearchPoint.x_;
                 break;
             case G_KDTree::axis::DEPTH:
                 startCoord = aStartPoint.y_;
-                partitionCoord = current->partitionPoint_.y_;
+                partitionCoord = current.partitionPoint_.y_;
                 maxSearchOffset = aMaxSearchPoint.y_;
                 break;
             default: // axis 2
                 startCoord = aStartPoint.z_;
-                partitionCoord = current->partitionPoint_.z_;
+                partitionCoord = current.partitionPoint_.z_;
                 maxSearchOffset = aMaxSearchPoint.z_;
                 break;
             }
 
-            // 3. Branching Logic: Use the local ints we just grabbed!
-            // This avoids reaching into the Point3D structs again.
-
             // Check if we need to search the LEFT branch
-            if (startCoord < partitionCoord)
+            if (startCoord < partitionCoord && current.leftIdx_ != G_KDTree::INVALID_IDX)
             {
-                getIntersectCandidates(current->left_, aDepth + 1, aStartPoint, aMaxSearchPoint, aPassedNodes);
+                getIntersectCandidates(current.leftIdx_, aDepth + 1, aStartPoint, aMaxSearchPoint, aPassedNodes);
             }
 
             // Check if we need to search the RIGHT branch
             // If the search area overlaps or is entirely to the right of the partition
-            if (partitionCoord < (startCoord + maxSearchOffset))
+            if (partitionCoord < (startCoord + maxSearchOffset) && current.rightIdx_ != G_KDTree::INVALID_IDX)
             {
-                getIntersectCandidates(current->right_, aDepth + 1, aStartPoint, aMaxSearchPoint, aPassedNodes);
+                getIntersectCandidates(current.rightIdx_, aDepth + 1, aStartPoint, aMaxSearchPoint, aPassedNodes);
             }
         }
 
-        void setNewRoot()
+        uint32_t generateRoot()
         {
-            treeRoot_ = generateNode(
+            return generateNode(
                 Point3D(maxDimensions_.x_ / 2, maxDimensions_.y_ / 2, maxDimensions_.z_ / 2),
-                minDimensions_,
-                maxDimensions_,
-                0);
+                G_KDTree::MIN_DEPTH);
         }
 
     public:
-        KdTree(int aEstimatedNumberOfItemFits, Point3D aMaxDimensions) : maxDepth_(8),
-                                                                         maxDimensions_(aMaxDimensions)
+        KdTree(const int aEstimatedNrOfItemFits, const Point3D aMaxDimensions) : maxDimensions_(aMaxDimensions)
 
         {
-            calculateMaxDepth(aEstimatedNumberOfItemFits);
-            generateTreeHelper();
+            // Calculates the depth of the tree that will be generated.
+            // This attempts to make the algorithm more efficient by scaling the tree depending of the estimated number of items that will fit in the bin.
+            maxDepth_ = static_cast<int>(ceil(sqrt(aEstimatedNrOfItemFits / G_KDTree::MAX_ITEMS_PER_NODE) + 1));
+            maxDepth_ = std::min(maxDepth_, static_cast<int>(G_KDTree::MAX_DEPTH));
+            nodes_.reserve(aEstimatedNrOfItemFits);
+            initialize();
         };
-        void printTreeImpHelper() const { printTreeImp(treeRoot_); };
-        const std::shared_ptr<Node> &getRoot() const { return treeRoot_; };
-        void generateTreeHelper()
+
+        void initialize()
         {
-            setNewRoot();
-            generateTree(treeRoot_,
-                         treeRoot_->Node::myDepth_,
-                         treeRoot_->Node::partitionPoint_,
-                         treeRoot_->Node::minSearchDimensions_,
-                         treeRoot_->Node::maxSearchDimensions_,
-                         maxDepth_);
-        };
+            nodes_.clear();
+            rootIdx_ = generateRoot();
+            generateTree(
+                rootIdx_,
+                G_KDTree::MIN_DEPTH,
+                nodes_[rootIdx_].partitionPoint_,
+                Point3D(0, 0, 0),
+                maxDimensions_);
+        }
 
         /**
-         * @brief Helper function to add a new itemKey to the tree.
+         * @brief Add a new itemKey to the tree.
          *
          * This method provides a simple interface to the method that adds a item to the tree.
          *
          * @param aItemKey          - The itemKey which will be added to the tree.
          * @param aItemMaxPosition  - The top right corner of the item, this is the position which will be used to search for the correct place to add the item.
          */
-        void addItemKeyToLeafHelper(const int aItemKey, const Point3D &aItemMaxPosition)
+        void addItemKeyToLeaf(const int aItemKey, const Point3D &aItemMaxPosition)
         {
-            addItemKeyToLeaf(treeRoot_, aItemKey, 0, aItemMaxPosition);
+            addItemKeyToLeaf(rootIdx_, aItemKey, G_KDTree::MIN_DEPTH, aItemMaxPosition);
         }
 
-        void getIntersectCandidatesHelper(const Point3D &aStartPoint, const Point3D &aMaxSearchPoint, std::vector<int> &aPassedNodes) const
+        void getIntersectCandidates(
+            const Point3D &aStartPoint,
+            const Point3D &aMaxSearchPoint,
+            std::vector<int> &aPassedNodes) const
         {
-            getIntersectCandidates(getRoot(), getRoot()->myDepth_, aStartPoint, aMaxSearchPoint, aPassedNodes);
+            getIntersectCandidates(
+                rootIdx_,
+                G_KDTree::MIN_DEPTH,
+                aStartPoint,
+                aMaxSearchPoint,
+                aPassedNodes);
         };
+
+        void printTree() const { printTree(rootIdx_); };
     };
 }
 
